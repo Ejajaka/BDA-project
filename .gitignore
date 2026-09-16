@@ -1,0 +1,19 @@
+__pycache__/
+*.py[cod]
+.venv*/
+.venv311/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Data (never commit large datasets)
+data/
+datasets/
+*.pcap
+*.csv
+!configs/*.csv
+
+# Results / generated artifacts
+results/
+figures/
+*.png
+!docs/*.png

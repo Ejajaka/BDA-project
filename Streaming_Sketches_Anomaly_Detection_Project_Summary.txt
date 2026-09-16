@@ -1,0 +1,396 @@
+PROJECT 3: STREAMING APPROXIMATE COUNTING + ADAPTIVE ANOMALY DETECTION
+
+Proposed Title
+Memory-Efficient Real-Time Network Anomaly Detection Using Probabilistic Sketches in Distributed Data Streams
+
+1. PROBLEM STATEMENT
+Modern systems continuously generate huge streams of network events such as IP addresses, endpoints, timestamps, ports, protocols, packet counts, and byte counts. Exact counting using hashmaps/dictionaries becomes increasingly memory-intensive as the number of events and unique keys grows.
+
+At the same time, network monitoring needs to detect abnormal behavior such as DDoS-like traffic, sudden traffic spikes, heavy-hitter IPs, and unusual changes in the number of unique sources.
+
+Goal:
+Build a distributed real-time streaming system that uses compact probabilistic data structures to estimate traffic statistics with low memory usage and uses those estimates to detect anomalies quickly.
+
+Core research question:
+Can Count-Min Sketch and HyperLogLog provide memory-efficient real-time traffic analytics while retaining acceptable estimation accuracy and enabling effective, low-latency anomaly detection?
+
+2. FOUNDATIONAL / BASELINE PAPERS
+The project is based on established techniques rather than inventing CMS or HLL.
+
+- Count-Min Sketch:
+  Cormode & Muthukrishnan, "An Improved Data Stream Summary: The Count-Min Sketch and its Applications."
+  Purpose: approximate frequency/count estimation using small memory.
+
+- HyperLogLog:
+  Flajolet et al., "HyperLogLog: the analysis of a near-optimal cardinality estimation algorithm."
+  Purpose: approximate counting of distinct/unique elements using very small memory.
+
+Additional literature should cover recent work on streaming anomaly detection, DDoS detection, heavy hitters, and distributed stream processing.
+
+3. RESEARCH GAP
+CMS and HLL are well-established, and network anomaly detection is also well studied. Therefore, the project should NOT claim that these algorithms or anomaly detection are new.
+
+The research gap should instead focus on evaluating/designing a unified streaming framework that combines:
+- CMS for per-IP/per-endpoint frequency
+- HLL for unique-source/cardinality estimation
+- Sliding/event-time windows
+- Heavy-hitter identification
+- Adaptive anomaly thresholds
+
+The key question is the trade-off between:
+- memory efficiency
+- estimation error
+- processing throughput
+- anomaly-detection quality
+- detection latency
+
+4. OUR PROPOSED NOVELTY / CONTRIBUTION
+Proposed contribution:
+An adaptive streaming anomaly-detection framework that combines multiple probabilistic summaries and temporal signals.
+
+Components:
+1. Count-Min Sketch:
+   Estimates how frequently an IP, endpoint, or other key appears.
+
+2. HyperLogLog:
+   Estimates the number of distinct IPs/users/sources in a time window.
+
+3. Sliding window:
+   Measures recent traffic rather than the entire history.
+
+4. Heavy-hitter detection:
+   Identifies keys responsible for unusually large portions of traffic.
+
+5. Adaptive threshold:
+   Learns the recent normal traffic baseline instead of using one fixed threshold.
+
+Example:
+Normal traffic = approximately 1,000 requests/sec.
+A sudden increase to 20,000 requests/sec combined with one IP generating most of the requests can trigger an anomaly alert.
+
+The novelty should be presented as the proposed system/design and its empirical evaluation, not as a new invention of CMS, HLL, Kafka, Flink, or anomaly detection.
+
+5. DATASETS
+Primary dataset:
+CIC-IDS2017 from the Canadian Institute for Cybersecurity, University of New Brunswick.
+
+Useful characteristics:
+- Real network traffic
+- Benign and attack traffic
+- Timestamps
+- Source/destination IP information
+- Ports and protocols
+- Packet/flow information
+- Attack labels
+- Includes DDoS, DoS, brute force, botnet and other attacks
+- PCAP and processed flow/CSV data are available
+
+Secondary optional dataset:
+UNSW-NB15 from UNSW Canberra.
+Can be used for cross-dataset validation.
+
+Synthetic data:
+Also generate controlled traffic streams for reproducible experiments:
+- normal traffic
+- 2x/5x/10x/50x traffic spikes
+- heavy-hitter behavior
+- gradual anomalies
+- sudden anomalies
+
+Best strategy:
+Use CIC-IDS2017 for realistic evaluation and synthetic data for controlled experiments.
+
+6. PROPOSED ARCHITECTURE
+
+CIC-IDS2017 / Synthetic Traffic
+          |
+          v
+    Data Preprocessor
+          |
+          v
+        Kafka
+          |
+          v
+        Flink
+          |
+      +---+---+
+      |       |
+      v       v
+     CMS     HLL
+      |       |
+      |       |
+      +---+---+
+          |
+          v
+    Sliding/Event-Time Window
+          |
+          v
+    Adaptive Anomaly Detector
+          |
+          v
+   Alert / Heavy-Hitter Analysis
+          |
+          v
+      Dashboard
+   (Streamlit/Grafana)
+
+Technology stack:
+- Apache Kafka: event streaming
+- Apache Flink: distributed stream processing
+- Count-Min Sketch implementation/library
+- HyperLogLog / Apache DataSketches
+- Python for preprocessing/generation and evaluation
+- Streamlit or Grafana for visualization
+
+7. BASELINES TO COMPARE AGAINST
+
+Baseline 1: Exact HashMap/Dictionary
+Stores exact counts.
+Use it to compare memory, speed, and accuracy against CMS.
+
+Baseline 2: Fixed-threshold detector
+Example:
+if requests > fixed threshold -> alert
+
+Compare this with the proposed adaptive threshold.
+
+Baseline 3: Individual sketch components
+Compare:
+- CMS only
+- HLL only
+- CMS + HLL
+- CMS + HLL + adaptive detector (proposed)
+
+This allows an ablation study to determine which component contributes to performance.
+
+8. WHAT WE WILL MEASURE
+
+A. MEMORY EFFICIENCY
+Measure memory as stream size increases:
+1M, 5M, 10M, 50M, 100M+ events.
+
+Compare:
+- Exact HashMap
+- CMS
+- HLL
+- Proposed system
+
+Expected trend:
+Exact counting memory grows with the number of distinct keys, while fixed-size sketches remain approximately bounded by their configured size.
+
+B. CMS FREQUENCY ESTIMATION ERROR
+Formula:
+Error (%) = |Estimated - Actual| / Actual x 100
+
+Vary CMS size and observe the memory-vs-accuracy trade-off.
+
+Expected trend:
+Larger sketch -> more memory -> lower estimation error.
+
+C. HLL CARDINALITY ERROR
+Compare actual unique IPs against HLL estimates.
+
+Formula:
+Relative Error = |Estimated - Actual| / Actual
+
+Expected trend:
+Increasing HLL capacity should improve estimation accuracy at the cost of memory.
+
+D. THROUGHPUT
+Measure:
+Throughput = events processed / second
+
+Compare exact counting, CMS, HLL, and the combined system.
+
+E. ANOMALY DETECTION QUALITY
+Using labeled traffic:
+- True Positive
+- False Positive
+- False Negative
+- True Negative
+
+Calculate:
+Precision = TP / (TP + FP)
+Recall = TP / (TP + FN)
+F1 = 2 x Precision x Recall / (Precision + Recall)
+
+F. DETECTION LATENCY
+Measure the time between the actual beginning of an attack/anomaly and the system alert.
+
+Detection Latency = Alert Time - Anomaly Start Time
+
+G. HEAVY-HITTER DETECTION
+Measure whether the system correctly identifies the IPs/endpoints responsible for the highest traffic volumes.
+
+Possible metric:
+Top-k overlap / Top-k accuracy.
+
+9. MAIN EXPERIMENTS
+
+Experiment 1:
+Exact HashMap vs CMS/HLL
+Goal: demonstrate memory savings.
+
+Experiment 2:
+Different CMS sizes
+Goal: demonstrate memory vs frequency-estimation accuracy.
+
+Experiment 3:
+Different HLL sizes
+Goal: demonstrate memory vs cardinality-estimation accuracy.
+
+Experiment 4:
+Fixed threshold vs adaptive threshold
+Goal: determine whether adaptive detection reduces false positives under changing traffic.
+
+Experiment 5:
+CMS only vs HLL only vs CMS+HLL vs proposed system
+Goal: ablation study.
+
+Experiment 6:
+Different anomaly intensities:
+2x, 5x, 10x, 50x normal traffic.
+Measure detection rate and latency.
+
+Experiment 7:
+Different stream volumes.
+Measure scalability and throughput.
+
+Experiment 8 (optional):
+Evaluate the final system on UNSW-NB15 to test generalization to another dataset.
+
+10. EXPECTED RESULTS
+
+The exact values must be obtained experimentally; do not claim specific numbers before running the experiments.
+
+Expected trends:
+
+1. Memory:
+Probabilistic sketches should use substantially less memory than exact dictionaries for large numbers of distinct keys.
+
+2. Accuracy:
+CMS/HLL will introduce approximation error, but the error should decrease as sketch capacity increases.
+
+3. Throughput:
+The compact structures should support high-rate streaming processing with manageable computational overhead.
+
+4. Detection:
+Combining frequency, cardinality, temporal, and heavy-hitter signals should provide useful information for anomaly detection.
+
+5. Adaptive threshold:
+The adaptive detector should be less dependent on one manually selected traffic threshold and may reduce false positives when normal traffic changes.
+
+6. Detection latency:
+Large, sudden traffic anomalies should be detected quickly, depending on the chosen window size and processing configuration.
+
+7. Trade-off:
+The project should identify a practical balance between:
+memory usage <-> estimation accuracy <-> throughput <-> detection quality <-> latency.
+
+11. IMPORTANT RESULTS/GRAPHS FOR THE PAPER
+
+Figure 1: Overall Kafka-Flink-CMS/HLL architecture.
+
+Figure 2: Memory usage vs number of events.
+
+Figure 3: CMS estimation error vs sketch size.
+
+Figure 4: HLL relative error vs number of unique elements.
+
+Figure 5: Throughput comparison of exact vs approximate methods.
+
+Figure 6: Precision, Recall and F1 for different detectors.
+
+Figure 7: Detection latency for different attack/anomaly types.
+
+Figure 8: Traffic-rate graph with the detected anomaly marked.
+
+Figure 9: Heavy-hitter/top-k detection performance.
+
+Figure 10: Ablation study showing the effect of CMS, HLL, adaptive threshold and heavy-hitter components.
+
+12. FINAL DEMO
+
+The presentation should include a live or replayed streaming demonstration.
+
+Normal state:
+- Requests/sec: normal
+- Unique IPs: normal
+- Top IP frequency: normal
+- Status: NORMAL
+
+Then inject/replay an anomalous traffic segment.
+
+Dashboard changes:
+- Requests/sec increases sharply
+- One IP may become a heavy hitter
+- CMS estimates its high frequency
+- HLL tracks unique sources
+- Adaptive detector identifies the deviation
+- Alert appears
+
+Show:
+- detection latency
+- estimated counts
+- memory usage
+- traffic graph
+- NORMAL -> ANOMALY transition
+
+13. IEEE PAPER STORY
+
+The paper should answer these research questions:
+
+RQ1: How much memory can probabilistic sketches save compared with exact counting?
+
+RQ2: How does sketch size affect estimation error?
+
+RQ3: Can the approach process high-volume streams at useful throughput?
+
+RQ4: Does combining frequency and cardinality information improve anomaly detection?
+
+RQ5: Does adaptive thresholding improve detection under changing traffic conditions?
+
+RQ6: How quickly can the system detect anomalous traffic?
+
+The paper structure can be:
+
+Abstract
+Introduction
+Related Work
+Problem Definition
+Proposed Architecture
+CMS and HLL Methodology
+Adaptive Anomaly Detection Method
+Experimental Setup
+Results and Analysis
+Ablation Study
+Limitations
+Conclusion
+References
+
+14. SIMPLE ONE-LINE EXPLANATION
+
+The project is:
+
+"Build a Kafka-Flink system that continuously analyzes huge network-data streams using tiny probabilistic summaries instead of storing everything exactly, and use those summaries to detect abnormal traffic in real time."
+
+15. OVERALL PROJECT ASSESSMENT
+
+Strengths:
+- Strong Big Data relevance
+- Uses modern streaming technology
+- Public, reliable datasets are available
+- Excellent live-demo potential
+- Clear quantitative experiments
+- Good balance of implementation and research
+- Can support an IEEE paper if the literature review identifies a defensible contribution
+
+Main risks:
+- Kafka/Flink setup and debugging
+- Correct implementation/integration of CMS and HLL
+- Avoiding overclaiming novelty
+- Need for careful experimental design
+- Detection quality depends on how anomaly features and thresholds are designed
+
+Recommended scope:
+Start with CIC-IDS2017 + synthetic traffic, implement exact counting first, then CMS/HLL, then streaming, then adaptive anomaly detection, and finally the dashboard and experiments.
