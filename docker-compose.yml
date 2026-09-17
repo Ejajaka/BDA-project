@@ -40,6 +40,9 @@ services:
     command: jobmanager
     ports:
       - "8082:8081"
+    volumes:
+      - ./jobs:/opt/jobs
+      - ./sketchstream:/opt/sketchstream/sketchstream
     environment:
       - |
         FLINK_PROPERTIES=
@@ -51,6 +54,9 @@ services:
     command: taskmanager
     depends_on:
       - jobmanager
+    volumes:
+      - ./jobs:/opt/jobs
+      - ./sketchstream:/opt/sketchstream/sketchstream
     environment:
       - |
         FLINK_PROPERTIES=

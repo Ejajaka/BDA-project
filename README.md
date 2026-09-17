@@ -87,10 +87,22 @@ docker-compose.yml       Kafka + Flink cluster
 
 ## Quickstart (no Docker required)
 
+### One command does everything
+```powershell
+# from anywhere; runs install -> tests -> experiments -> CIC evaluation -> demo -> dashboard
+powershell -ExecutionPolicy Bypass -File run_all.ps1
+
+# or just double-click:  run_all.bat
+```
+Options: `-Quick` (smaller sizes), `-SkipInstall`, `-SkipTests`, `-NoDashboard`,
+`-Distributed` (also runs the Kafka + Flink path; needs Docker Desktop).
+
+### Or step by step
 ```powershell
 pip install -r requirements.txt
-python -m pytest -q                      # 34 tests
+python -m pytest -q                      # 41 tests
 python scripts/run_local_experiments.py --quick
+python scripts/run_cicids_evaluation.py --cicids "data/cicids/<file>.csv"
 python scripts/demo_stream.py --scenario mixed --duration 90 --base-rate 2000
 streamlit run dashboard/app.py           # then "Replay live"
 ```
