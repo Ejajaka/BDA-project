@@ -118,7 +118,7 @@ def main() -> None:
         if top:
             table_top.dataframe(
                 pd.DataFrame(top, columns=["source IP", "estimated count"]),
-                use_container_width=True,
+                width="stretch",
             )
 
     if not replay:

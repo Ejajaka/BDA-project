@@ -16,8 +16,15 @@ datasets/
 jars/
 .venv311/
 
-# Results / generated artifacts
-results/
-figures/
+# Results / generated artifacts (commit selected evidence)
+results/*
+!results/cicids_memory.csv
+!results/cicids_sketch_accuracy.csv
+!results/cicids_ablation.csv
+!results/flink_stream.jsonl
+!results/flink_alerts.jsonl
+!results/flink_incremental.jsonl
+!results/flink_job_overview.json
+figures/*
 *.png
 !docs/*.png

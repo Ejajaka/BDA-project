@@ -577,13 +577,13 @@ exact 0.05 MB vs sketches 97 KB (sketches *lose* at this cardinality — expecte
 - [x] Run Kafka → Flink end-to-end on Docker (verified; alert fired).
 - [x] Add a dedicated `scripts/run_cicids_evaluation.py` (with `--demo` self-test).
 - [x] Add **interval-level** detection metrics to `metrics/evaluation.py`.
-- [x] Add mergeable, serialisable sketch state (`sketches/state.py`) for
-      incremental Flink state.
+- [x] Add mergeable, serialisable sketch state (`sketches/state.py`).
+- [x] Wire `SketchState` into a Flink `AggregateFunction` (`--incremental`), so
+      window memory is O(1) instead of O(window) — verified on the cluster.
 - [x] UNSW-NB15 loader (`io/unsw.py`).
-- [ ] Run `run_cicids_evaluation.py` on the **real CIC-IDS2017** files.
-- [ ] Wire `SketchState` into a Flink `AggregateFunction` (replace the buffered
-      `ProcessAllWindowFunction`) so window memory is O(1) instead of O(window).
-- [ ] (Optional) UNSW-NB15 cross-dataset numbers.
+- [x] Run `run_cicids_evaluation.py` on **real CIC-IDS2017** (Friday DDoS day).
+- [ ] UNSW-NB15 real numbers — public ML splits lack IPs/timestamps and the raw
+      mirrors are normalised; needs the official raw CSVs.
 - [ ] IEEE-style paper write-up using the figures.
 
 ---
@@ -627,6 +627,30 @@ adaptive alert on an injected heavy-hitter spike:
 
 Evidence saved to `results/flink_stream.jsonl`, `results/flink_alerts.jsonl`,
 `results/flink_job_overview.json`.
+
+### Incremental state verified
+The `--incremental` path (`SketchAggregate` + `IncrementalEmitter` using
+`SketchState.merge`) produced **identical** results to the buffered path on the
+cluster (`total=1243`, `192.168.0.66=1106`, `z=40.82`), but folds each event into
+a fixed-size state instead of buffering the window:
+```
+flink run -d -py /opt/jobs/flink_job.py --bootstrap kafka:29092 --from-earliest \
+  --incremental --out /tmp/flink_incremental.jsonl --window-size 1 --parallelism 2 \
+  --warmup 2 --z-threshold 3.0
+```
+Evidence: `results/flink_incremental.jsonl`.
+
+### Real CIC-IDS2017 evaluated
+`scripts/run_cicids_evaluation.py` was run on the real **Friday-WorkingHours-
+Afternoon-DDos** file (225,745 events, 2,067 source IPs, 21 attack intervals):
+memory 0.17 MB exact vs 96.9 KB sketches, CMS mean error 7.4 %, HLL error 0.39 %,
+**interval recall 1.00** for all detectors. Evidence:
+`results/cicids_memory.csv`, `results/cicids_sketch_accuracy.csv`,
+`results/cicids_ablation.csv`.
+
+### Dashboard verified
+`dashboard/app.py` serves (HTTP 200, health `ok`) and runs with **no exceptions**
+under Streamlit's `AppTest` (5 metrics rendered).
 
 ### Bugs found and fixed while getting the distributed job running (CO5 material)
 

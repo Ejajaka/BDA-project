@@ -1,0 +1,4 @@
+detector,tp,fp,fn,precision,recall,f1,interval_recall,interval_precision,mean_latency_s,alerts
+fixed,21,29,0,0.42,1.0,0.5915,1.0,0.42,1.0,50
+adaptive_ewma,21,28,0,0.4286,1.0,0.6,1.0,0.4286,1.0,49
+adaptive_cusum,21,28,0,0.4286,1.0,0.6,1.0,0.4286,1.0,49

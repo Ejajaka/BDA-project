@@ -115,6 +115,8 @@ def main(argv=None):
                         help="run a local mini-cluster instead of submitting")
     parser.add_argument("--from-earliest", action="store_true",
                         help="start from the earliest offset (consume existing events)")
+    parser.add_argument("--incremental", action="store_true",
+                        help="use mergeable SketchState aggregation (O(1) window memory)")
     parser.add_argument("--out", default="", help="optional JSONL file sink")
     args = parser.parse_args(argv)
 
@@ -148,12 +150,12 @@ def main(argv=None):
     )
     parsed = parsed.assign_timestamps_and_watermarks(watermark)
 
-    from pyflink.datastream.functions import ProcessAllWindowFunction
+    from pyflink.datastream.functions import AggregateFunction, ProcessAllWindowFunction
     from pyflink.datastream.window import TumblingEventTimeWindows
 
     from sketchstream.detector import AdaptiveDetector
     from sketchstream.events import WindowSummary
-    from sketchstream.sketches import CountMinSketch, HyperLogLog, SpaceSaving
+    from sketchstream.sketches import CountMinSketch, HyperLogLog, SketchState, SpaceSaving
 
     class AnomalyWindow(ProcessAllWindowFunction):
         """One instance persists across windows -> detector state is retained."""
@@ -209,6 +211,78 @@ def main(argv=None):
 
     from pyflink.datastream.functions import MapFunction
 
+    class IncrementalEmitter(ProcessAllWindowFunction):
+        """Emit a record from an aggregated :class:`SketchState`.
+
+        Window memory is O(1): events are folded into the state by the
+        ``SketchAggregate`` function instead of being buffered.
+        """
+
+        def __init__(self, top_k, z_threshold, warmup):
+            self._top_k = top_k
+            self._detector = AdaptiveDetector(warmup=warmup, z_threshold=z_threshold)
+
+        def process(self, context, elements):
+            state = None
+            for state in elements:  # exactly one aggregated result
+                pass
+            window = context.window()
+            summary = state.summary(
+                index=int(window.start // 1000),
+                start=window.start / 1000.0,
+                end=window.end / 1000.0,
+                top_k=self._top_k,
+            )
+            alert = self._detector.observe(summary)
+            return [
+                json.dumps(
+                    {
+                        "type": "window",
+                        "start": summary.start,
+                        "end": summary.end,
+                        "total": summary.total,
+                        "unique": round(summary.unique_sources, 1),
+                        "top": [[k, int(c)] for k, c in summary.top_keys[:5]],
+                        "alert": alert is not None,
+                        "score": round(alert.score, 3) if alert else None,
+                        "reason": alert.reason if alert else None,
+                    }
+                )
+            ]
+
+    class SketchAggregate(AggregateFunction):
+        """Incrementally fold events into a fixed-size, mergeable SketchState."""
+
+        def __init__(self, cms_width, cms_depth, hll_precision, hh_capacity, seed=0):
+            self._cms_width = cms_width
+            self._cms_depth = cms_depth
+            self._hll_precision = hll_precision
+            self._hh_capacity = hh_capacity
+            self._seed = seed
+
+        def create_accumulator(self):
+            return SketchState(
+                cms_width=self._cms_width,
+                cms_depth=self._cms_depth,
+                hll_precision=self._hll_precision,
+                hh_capacity=self._hh_capacity,
+                seed=self._seed,
+            )
+
+        def add(self, value, accumulator):
+            accumulator.add(value[1])  # value = (ts, src_ip)
+            return accumulator
+
+        def get_result(self, accumulator):
+            return accumulator
+
+        def merge(self, accumulators):
+            accumulators = list(accumulators)
+            base = accumulators[0]
+            for other in accumulators[1:]:
+                base.merge(other)
+            return base
+
     class JsonlWriter(MapFunction):
         def __init__(self, path):
             self._path = path
@@ -224,16 +298,26 @@ def main(argv=None):
         def close(self):
             self._fh.close()
 
-    result = (
-        parsed.window_all(TumblingEventTimeWindows.of(Time.seconds(args.window_size)))
-        .process(
+    windowed = parsed.window_all(
+        TumblingEventTimeWindows.of(Time.seconds(args.window_size))
+    )
+    if args.incremental:
+        result = windowed.aggregate(
+            SketchAggregate(
+                args.cms_width, args.cms_depth, args.hll_precision, args.hh_capacity
+            ),
+            IncrementalEmitter(10, args.z_threshold, args.warmup),
+            accumulator_type=Types.PICKLED_BYTE_ARRAY(),
+            output_type=Types.STRING(),
+        )
+    else:
+        result = windowed.process(
             AnomalyWindow(
                 args.cms_width, args.cms_depth, args.hll_precision,
                 args.hh_capacity, 10, args.z_threshold, args.warmup,
             ),
             output_type=Types.STRING(),
         )
-    )
 
     if args.out:
         result = result.map(JsonlWriter(args.out), output_type=Types.STRING())

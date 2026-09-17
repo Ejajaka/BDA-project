@@ -196,9 +196,25 @@ docker exec sketchstream-jobmanager bash -lc "flink list -r"      # then: flink 
 - [x] Dedicated dataset evaluation script (`scripts/run_cicids_evaluation.py`) with
   a self-test `--demo`; UNSW-NB15 loader (`sketchstream/io/unsw.py`)
 - [x] Mergeable sketch state for incremental Flink state (`sketchstream/sketches/state.py`)
-- [ ] Run `run_cicids_evaluation.py` on the **real CIC-IDS2017** files (download
-  the TrafficLabelling CSVs into `data/cicids/`)
-- [ ] (Optional) UNSW-NB15 cross-dataset numbers
+- [x] **Real CIC-IDS2017 evaluation completed** (Friday DDoS day)
+- [ ] UNSW-NB15 real numbers (public ML splits lack IPs/timestamps; raw mirrors
+  are normalized) — loader is ready for the official raw CSVs
+- [ ] IEEE paper write-up
+
+### Real CIC-IDS2017 results (Friday-WorkingHours-Afternoon-DDos)
+225,745 events, 2,067 distinct source IPs, 21 ground-truth attack intervals.
+
+| Metric | Value |
+|---|---|
+| Memory: exact hashmap vs sketches | 0.17 MB (2,067 keys) vs **96.9 KB** |
+| CMS mean relative error (width 2000, depth 5) | 7.4 % |
+| HLL relative error (precision 12) | **0.39 %** |
+| Interval recall (all detectors) | **1.00** (all 21 intervals detected) |
+| Fixed threshold | P=0.42 R=1.00 F1=0.59 |
+| Adaptive EWMA / CUSUM | P=0.43 R=1.00 F1=0.60 |
+
+Evidence: `results/cicids_memory.csv`, `results/cicids_sketch_accuracy.csv`,
+`results/cicids_ablation.csv`.
 
 ### Verified distributed run (evidence in `results/`)
 ```
