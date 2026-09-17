@@ -1,9 +1,13 @@
 from sketchstream.detector import Alert
 from sketchstream.events import NetworkEvent, WindowSummary
 from sketchstream.metrics import (
+    attack_intervals,
+    detected_intervals,
     detection_latencies,
     evaluate_detection,
     ground_truth_windows,
+    interval_precision,
+    interval_recall,
     relative_error,
     topk_overlap,
     window_attack_counts,
@@ -66,3 +70,30 @@ def test_topk_overlap():
     pred = [("a", 10), ("b", 9), ("c", 8)]
     actual = [("a", 10), ("b", 9), ("d", 7)]
     assert topk_overlap(pred, actual, k=3) == 2 / 3
+
+
+def test_attack_intervals_merge_runs():
+    events = []
+    # windows 1 and 2 are attacks, window 4 too (gap at 3)
+    for w in (1, 2, 4):
+        for _ in range(10):
+            events.append(NetworkEvent(ts=w + 0.5, src_ip="x", label="DDoS"))
+    intervals = attack_intervals(events, size=1.0, min_fraction=0.5, min_events=5)
+    assert intervals == [(1.0, 3.0), (4.0, 5.0)]
+    bridged = attack_intervals(
+        events, size=1.0, min_fraction=0.5, min_events=5, max_gap_windows=1
+    )
+    assert bridged == [(1.0, 5.0)]
+
+
+def test_interval_recall_and_precision():
+    alerts = [
+        Alert(window_index=2, window_end=3.0, score=5.0, detector="d", reason=""),
+        Alert(window_index=9, window_end=10.0, score=5.0, detector="d", reason=""),
+    ]
+    intervals = [(1.0, 4.0), (7.0, 8.0)]  # second interval missed
+    assert detected_intervals(alerts, intervals) == [True, False]
+    assert interval_recall(alerts, intervals) == 0.5
+    # one of two alerts is inside an interval -> precision 0.5
+    assert interval_precision(alerts, intervals) == 0.5
+

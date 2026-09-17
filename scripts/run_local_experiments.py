@@ -51,6 +51,8 @@ from sketchstream.generator import AnomalySpec, SyntheticConfig, generate
 from sketchstream.metrics import (
     detection_latencies,
     evaluate_detection,
+    interval_precision,
+    interval_recall,
     relative_error,
 )
 from sketchstream.pipeline import run_local_pipeline
@@ -305,6 +307,8 @@ def _eval_run(events, intervals, detector, window_size, sketch_kwargs):
     metrics = evaluate_detection(result.summaries, result.alerts, result.ground_truth)
     lat = [x for x in detection_latencies(result.alerts, intervals) if x is not None]
     metrics["mean_latency"] = float(np.mean(lat)) if lat else float("nan")
+    metrics["interval_recall"] = interval_recall(result.alerts, intervals)
+    metrics["interval_precision"] = interval_precision(result.alerts, intervals)
     metrics["alerts"] = len(result.alerts)
     return metrics
 
@@ -326,8 +330,8 @@ def exp5_ablation(out_dir, fig_dir, quick=False):
 
     detectors = {
         "fixed": FixedThresholdDetector(threshold=base_rate * window_size * 3),
-        "adaptive_ewma": AdaptiveDetector(warmup=30, z_threshold=4.0),
-        "adaptive_cusum": CusumDetector(warmup=30, k=0.5, h=6.0),
+        "adaptive_ewma": AdaptiveDetector(warmup=10, z_threshold=4.0),
+        "adaptive_cusum": CusumDetector(warmup=10, k=0.1, h=5.0),
     }
     rows = []
     for name, det in detectors.items():
@@ -335,15 +339,18 @@ def exp5_ablation(out_dir, fig_dir, quick=False):
         rows.append([
             name, m["tp"], m["fp"], m["fn"],
             round(m["precision"], 4), round(m["recall"], 4), round(m["f1"], 4),
+            round(m["interval_recall"], 4), round(m["interval_precision"], 4),
             round(m["mean_latency"], 3), m["alerts"],
         ])
         print(
             f"  {name:<14} P={m['precision']:.3f} R={m['recall']:.3f} "
-            f"F1={m['f1']:.3f} FP={m['fp']} FN={m['fn']} lat={m['mean_latency']:.2f}s"
+            f"F1={m['f1']:.3f} | interval R={m['interval_recall']:.3f} "
+            f"P={m['interval_precision']:.3f} | FP={m['fp']} FN={m['fn']}"
         )
     write_csv(
         os.path.join(out_dir, "exp5_ablation.csv"),
-        ["detector", "tp", "fp", "fn", "precision", "recall", "f1", "mean_latency_s", "alerts"],
+        ["detector", "tp", "fp", "fn", "precision", "recall", "f1",
+         "interval_recall", "interval_precision", "mean_latency_s", "alerts"],
         rows,
     )
     if _HAVE_PLT:

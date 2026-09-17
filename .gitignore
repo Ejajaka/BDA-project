@@ -12,6 +12,10 @@ datasets/
 *.csv
 !configs/*.csv
 
+# Local tooling / binaries
+jars/
+.venv311/
+
 # Results / generated artifacts
 results/
 figures/

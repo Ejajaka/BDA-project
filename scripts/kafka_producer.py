@@ -78,11 +78,22 @@ def main(argv=None):
         if args.limit:
             events = events[: args.limit]
 
-    producer = Producer({"bootstrap.servers": args.bootstrap})
+    producer = Producer(
+        {
+            "bootstrap.servers": args.bootstrap,
+            "queue.buffering.max.messages": 1_000_000,
+            "linger.ms": 5,
+        }
+    )
     start_wall = time.perf_counter()
     for i, event in enumerate(events):
-        producer.produce(args.topic, value=_event_to_json(event))
-        if i % 1000 == 0:
+        while True:
+            try:
+                producer.produce(args.topic, value=_event_to_json(event))
+                break
+            except BufferError:
+                producer.poll(0.5)
+        if i % 100 == 0:
             producer.poll(0)
         if args.realtime and args.speed > 0:
             target = event.ts / args.speed

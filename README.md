@@ -11,6 +11,10 @@ instead of a fixed threshold.
 The novelty is a *unified streaming framework + rigorous empirical evaluation* —
 we do **not** claim to have invented CMS, HLL, Kafka, Flink or anomaly detection.
 
+> 📘 **New here? Read [`MANUAL.md`](MANUAL.md)** — the full step-by-step recreation
+> guide (environment, every file, rebuild-from-scratch, experiments, distributed
+> deployment, troubleshooting).
+
 ---
 
 ## Rubric mapping
@@ -96,21 +100,29 @@ Artifacts are written to `results/` (CSV) and `figures/` (PNG).
 ### Distributed path (Kafka + Flink)
 
 ```powershell
-docker compose up -d
-docker compose up -d --scale taskmanager=2
-# Flink UI: http://localhost:8081
+docker compose build                        # builds Flink+Python image (Dockerfile.flink)
+docker compose up -d --scale taskmanager=2  # 1 JobManager + 2 TaskManagers
+# Flink UI: http://localhost:8082   (8081 may be taken by another app)
+# Kafka broker for the host: localhost:9092 ; in-network: kafka:29092
 
-# producer (Python 3.11 venv recommended):
+# producer (Python 3.11 venv):
 pip install -r requirements-streaming.txt
-python scripts/kafka_producer.py --scenario mixed --realtime --speed 5
+python scripts/kafka_producer.py --scenario mixed --duration 60 --base-rate 5000 --limit 150000
 
-# submit the job (inside the Flink container):
-docker exec -it sketchstream-jobmanager flink run -py /opt/jobs/flink_job.py
+# submit the PyFlink job to the cluster (jar is baked into the image at /opt/flink/lib):
+docker exec sketchstream-jobmanager bash -lc "flink run -d -py /opt/jobs/flink_job.py \
+  --bootstrap kafka:29092 --from-earliest --out /tmp/flink_stream.jsonl --window-size 1 --parallelism 2"
+
+# read results / cancel
+docker exec project_bda-taskmanager-1 bash -lc "cat /tmp/flink_stream.jsonl"
+docker exec sketchstream-jobmanager bash -lc "flink list -r"      # then: flink cancel <jobid>
 ```
 
-> **Python 3.13 caveat.** PyFlink does not support Python 3.13 yet. Create a
-> Python 3.11 venv (`.venv311`) for `requirements-streaming.txt` and the Flink
-> job. The entire `sketchstream` library and all experiments run on 3.13.
+> **Python 3.13 caveat.** PyFlink has no wheel for 3.13. Install Python 3.11
+> (`winget install Python.Python.3.11`), create `.venv311`, and install
+> `requirements-streaming.txt` there. PyFlink also has an unreliable harness on
+> Windows, which is why the job is run **inside the Docker cluster** (Linux) via
+> `Dockerfile.flink`.
 
 ---
 
@@ -172,17 +184,33 @@ docker exec -it sketchstream-jobmanager flink run -py /opt/jobs/flink_job.py
 
 ---
 
-## Roadmap (aligned with the project prioritisation)
+## Status / roadmap
 
 - [x] **Phase 1** — preprocessing + exact counting
+- [x] **Phase 2** — **Kafka → Flink end-to-end on the Docker cluster** (verified:
+  2 TaskManagers, job RUNNING, adaptive alert fired on a heavy-hitter spike)
 - [x] **Phase 3** — CMS + HLL
 - [x] **Phase 4** — windows + adaptive detection + heavy hitters
 - [x] **Phase 5** — dashboard
-- [x] **Phase 6** — experiments (exact vs approx, fixed vs adaptive, ablation)
-- [ ] **Phase 2** — run the Kafka→Flink job end-to-end on the Docker cluster and
-      capture throughput/latency from the Flink metrics UI
-- [ ] Interval-level detection metric + real CIC-IDS2017 evaluation numbers
-- [ ] (Optional) UNSW-NB15 cross-dataset validation
+- [x] **Phase 6** — experiments + interval-level metrics + ablation
+- [x] Dedicated dataset evaluation script (`scripts/run_cicids_evaluation.py`) with
+  a self-test `--demo`; UNSW-NB15 loader (`sketchstream/io/unsw.py`)
+- [x] Mergeable sketch state for incremental Flink state (`sketchstream/sketches/state.py`)
+- [ ] Run `run_cicids_evaluation.py` on the **real CIC-IDS2017** files (download
+  the TrafficLabelling CSVs into `data/cicids/`)
+- [ ] (Optional) UNSW-NB15 cross-dataset numbers
+
+### Verified distributed run (evidence in `results/`)
+```
+Kafka (4 partitions, 150k events)
+  -> Flink 1.20.5 cluster (1 JobManager + 2 TaskManagers, 8 slots)
+  -> PyFlink job: CMS + HLL + Space-Saving over 1s event-time windows
+  -> adaptive detector
+  -> {"start":3.0,"end":4.0,"total":1243,"unique":47.3,
+      "top":[["192.168.0.66",1106]],"alert":true,"score":40.82}
+```
+Flink UI runs on **http://localhost:8082** (8081 is used by another project on
+this machine).
 
 ---
 

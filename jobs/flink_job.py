@@ -38,29 +38,36 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 def build_env(args):
+    from pathlib import Path
+
     from pyflink.datastream import StreamExecutionEnvironment, RuntimeExecutionMode
 
     env = StreamExecutionEnvironment.get_execution_environment()
     env.set_runtime_mode(RuntimeExecutionMode.STREAMING)
     env.set_parallelism(args.parallelism)
     for jar in args.jars:
-        env.add_jars(f"file://{os.path.abspath(jar)}")
+        env.add_jars(Path(jar).resolve().as_uri())
     return env
 
 
 def build_source(args):
     from pyflink.common.serialization import SimpleStringSchema
-    from pyflink.connector.kafka.source import KafkaSource
-    from pyflink.connector.kafka.source.enumerator.initializer import (
-        OffsetsInitializer,
+    from pyflink.datastream.connectors.kafka import (
+        KafkaOffsetsInitializer,
+        KafkaSource,
     )
 
+    initial = (
+        KafkaOffsetsInitializer.earliest()
+        if args.from_earliest
+        else KafkaOffsetsInitializer.latest()
+    )
     return (
         KafkaSource.builder()
         .set_bootstrap_servers(args.bootstrap)
         .set_topics(args.topic)
         .set_group_id(args.group_id)
-        .set_starting_offsets(OffsetsInitializer.latest())
+        .set_starting_offsets(initial)
         .set_value_only_deserializer(SimpleStringSchema())
         .build()
     )
@@ -70,7 +77,10 @@ def build_sink(args):
     if not args.alerts_topic:
         return None
     from pyflink.common.serialization import SimpleStringSchema
-    from pyflink.connector.kafka.sink import KafkaSink, KafkaRecordSerializationSchema
+    from pyflink.datastream.connectors.kafka import (
+        KafkaRecordSerializationSchema,
+        KafkaSink,
+    )
 
     return (
         KafkaSink.builder()
@@ -103,6 +113,8 @@ def main(argv=None):
                         help="path to flink-connector-kafka jar (repeatable)")
     parser.add_argument("--local", action="store_true",
                         help="run a local mini-cluster instead of submitting")
+    parser.add_argument("--from-earliest", action="store_true",
+                        help="start from the earliest offset (consume existing events)")
     parser.add_argument("--out", default="", help="optional JSONL file sink")
     args = parser.parse_args(argv)
 
@@ -123,9 +135,16 @@ def main(argv=None):
     event_type = Types.TUPLE([Types.DOUBLE(), Types.STRING()])
     parsed = stream.map(parse, output_type=event_type)
 
+    from pyflink.common.watermark_strategy import TimestampAssigner
+
+    class EventTimeAssigner(TimestampAssigner):
+        def extract_timestamp(self, value, record_timestamp):
+            return int(value[0] * 1000)  # seconds -> milliseconds
+
     watermark = (
         WatermarkStrategy.for_bounded_out_of_orderness(Duration.of_seconds(2))
-        .with_timestamp_assigner(lambda e, _ts: int(e[0] * 1000))
+        .with_idleness(Duration.of_seconds(5))
+        .with_timestamp_assigner(EventTimeAssigner())
     )
     parsed = parsed.assign_timestamps_and_watermarks(watermark)
 
@@ -148,7 +167,7 @@ def main(argv=None):
             self._top_k = top_k
             self._detector = AdaptiveDetector(warmup=warmup, z_threshold=z_threshold)
 
-        def process(self, context, elements, out):
+        def process(self, context, elements):
             cms = CountMinSketch(self._cms_width, self._cms_depth)
             hll = HyperLogLog(self._hll_precision)
             hh = SpaceSaving(self._hh_capacity)
@@ -171,7 +190,8 @@ def main(argv=None):
                 heavy=hh,
             )
             alert = self._detector.observe(summary)
-            out.collect(
+            # PyFlink's ProcessAllWindowFunction returns an iterable of outputs.
+            return [
                 json.dumps(
                     {
                         "type": "window",
@@ -185,7 +205,7 @@ def main(argv=None):
                         "reason": alert.reason if alert else None,
                     }
                 )
-            )
+            ]
 
     from pyflink.datastream.functions import MapFunction
 

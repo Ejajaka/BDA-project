@@ -52,6 +52,34 @@ def ground_truth_windows(
     return truth
 
 
+def attack_intervals(
+    events: Sequence[NetworkEvent],
+    size: float,
+    min_fraction: float = 0.1,
+    min_events: int = 5,
+    max_gap_windows: int = 0,
+) -> List[Tuple[float, float]]:
+    """Merge consecutive anomalous windows into ``(start, end)`` intervals.
+
+    Used to measure *interval-level* detection latency on labelled data.
+    ``max_gap_windows`` bridges short benign gaps between attack windows.
+    """
+    truth = ground_truth_windows(events, size, min_fraction, min_events)
+    positive = sorted(idx for idx, is_attack in truth.items() if is_attack)
+    if not positive:
+        return []
+    intervals: List[Tuple[float, float]] = []
+    run_start = prev = positive[0]
+    for idx in positive[1:]:
+        if idx - prev <= max_gap_windows + 1:
+            prev = idx
+            continue
+        intervals.append((run_start * size, (prev + 1) * size))
+        run_start = prev = idx
+    intervals.append((run_start * size, (prev + 1) * size))
+    return intervals
+
+
 # --------------------------------------------------------------------------- #
 # Detection quality
 # --------------------------------------------------------------------------- #
@@ -130,11 +158,62 @@ def topk_overlap(
     return len(pred_keys & actual_keys) / k
 
 
+# --------------------------------------------------------------------------- #
+# Interval-level detection (robust for sustained anomalies)
+# --------------------------------------------------------------------------- #
+def detected_intervals(
+    alerts: Sequence[Alert],
+    intervals: Iterable[Tuple[float, float]],
+    slack: float = 0.0,
+) -> List[bool]:
+    """For each anomaly interval, True if at least one alert falls inside it."""
+    ends = [a.window_end for a in alerts]
+    return [
+        any(start <= end <= stop + slack for end in ends)
+        for start, stop in intervals
+    ]
+
+
+def interval_recall(
+    alerts: Sequence[Alert],
+    intervals: Iterable[Tuple[float, float]],
+    slack: float = 0.0,
+) -> float:
+    """Fraction of anomaly intervals that were detected at least once."""
+    intervals = list(intervals)
+    if not intervals:
+        return 0.0
+    return sum(detected_intervals(alerts, intervals, slack)) / len(intervals)
+
+
+def interval_precision(
+    alerts: Sequence[Alert],
+    intervals: Iterable[Tuple[float, float]],
+    slack: float = 0.0,
+) -> float:
+    """Fraction of alerts that fall inside some anomaly interval."""
+    alerts = list(alerts)
+    if not alerts:
+        return 0.0
+    intervals = list(intervals)
+    inside = sum(
+        1
+        for a in alerts
+        if any(start <= a.window_end <= stop + slack for start, stop in intervals)
+    )
+    return inside / len(alerts)
+
+
+
 __all__ = [
     "relative_error",
     "window_attack_counts",
     "ground_truth_windows",
+    "attack_intervals",
     "evaluate_detection",
     "detection_latencies",
     "topk_overlap",
+    "detected_intervals",
+    "interval_recall",
+    "interval_precision",
 ]

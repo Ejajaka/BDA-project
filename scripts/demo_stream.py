@@ -52,8 +52,8 @@ def main(argv=None):
         args.scenario, duration=args.duration, base_rate=args.base_rate, seed=args.seed
     )
     cfg = {
-        "adaptive": dict(warmup=20, z_threshold=4.0),
-        "cusum": dict(warmup=20, k=0.5, h=6.0),
+        "adaptive": dict(warmup=10, z_threshold=4.0),
+        "cusum": dict(warmup=10, k=0.1, h=5.0),
     }[args.detector]
     detector = build_detector(args.detector, cfg)
     result = run_local_pipeline(
