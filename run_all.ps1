@@ -138,7 +138,43 @@ if (-not $NoDashboard) {
 if ($Distributed) {
     Section "7. Distributed Kafka + Flink"
 
-    # 7a. build image only if missing
+    # 7a. ensure the Kafka connector jar exists (needed by the image build; it is
+    #     NOT committed because it is a 5 MB binary)
+    $jarName = 'flink-sql-connector-kafka-3.4.0-1.20.jar'
+    $jarPath = Join-Path 'jars' $jarName
+    if (-not (Test-Path $jarPath)) {
+        New-Item -ItemType Directory -Force -Path 'jars' | Out-Null
+        $jarUrl = "https://repo1.maven.org/maven2/org/apache/flink/flink-sql-connector-kafka/3.4.0-1.20/$jarName"
+        Step "downloading Kafka connector jar from Maven Central..."
+        try {
+            Invoke-WebRequest -UseBasicParsing -Uri $jarUrl -OutFile $jarPath -TimeoutSec 300
+            Ok "jar downloaded"
+        } catch {
+            Bad "could not download the Kafka connector jar; place '$jarName' in jars\ manually"
+        }
+    } else { Ok "Kafka connector jar present" }
+
+    # 7b. ensure a producer environment that has confluent-kafka
+    $prodPy = "python"
+    if (Test-Path '.\.venv311\Scripts\python.exe') {
+        $prodPy = ".\.venv311\Scripts\python.exe"
+        Ok "producer environment (.venv311) present"
+    } else {
+        Step "no .venv311 - creating one for the Kafka producer..."
+        $p311 = "$env:LOCALAPPDATA\Programs\Python\Python311\python.exe"
+        if (-not (Test-Path $p311)) { $p311 = "py" }
+        if ($p311 -eq "py") { & py -3.11 -m venv .venv311 2>$null }
+        else { & $p311 -m venv .venv311 }
+        if (Test-Path '.\.venv311\Scripts\python.exe') {
+            & .\.venv311\Scripts\python.exe -m pip install -q confluent-kafka
+            $prodPy = ".\.venv311\Scripts\python.exe"
+            Ok "producer environment ready"
+        } else {
+            Warn "Python 3.11 not found; using the default python (needs confluent-kafka installed)"
+        }
+    }
+
+    # 7c. build image only if missing
     $img = (& docker images -q sketchstream-flink:local 2>$null)
     if (-not $img) {
         Step "building Flink+Python image (first run only, several minutes)..."
@@ -146,7 +182,7 @@ if ($Distributed) {
         if ($LASTEXITCODE -ne 0) { Bad "docker compose build failed" }
     } else { Ok "Flink image already built" }
 
-    # 7b. start cluster
+    # 7d. start cluster
     Step "starting Kafka + JobManager + 2 TaskManagers..."
     & docker compose up -d --scale taskmanager=2 | Out-Null
     if ($LASTEXITCODE -ne 0) { Bad "docker compose up failed" }
@@ -163,14 +199,12 @@ if ($Distributed) {
     if ($ready) { Ok "Flink cluster ready: 2 TaskManagers (UI http://localhost:8082)" }
     else { Warn "cluster did not report 2 TaskManagers in time; continuing anyway" }
 
-    # 7c. produce events
-    $prodPy = "python"
-    if (Test-Path '.\.venv311\Scripts\python.exe') { $prodPy = ".\.venv311\Scripts\python.exe" }
+    # 7e. produce events
     Step "producing a small anomaly stream into Kafka..."
     & $prodPy scripts\kafka_producer.py --scenario sudden --duration 8 --base-rate 150 --limit 6000
     if ($LASTEXITCODE -ne 0) { Bad "Kafka producer failed (is confluent-kafka installed in .venv311?)" }
 
-    # 7d. submit the incremental PyFlink job
+    # 7f. submit the incremental PyFlink job
     Step "submitting the PyFlink job (--incremental: O(1) window memory)..."
     $runOut = "/tmp/flink_run.jsonl"
     $submit = 'flink run -d -py /opt/jobs/flink_job.py --bootstrap kafka:29092 ' +
@@ -181,7 +215,7 @@ if ($Distributed) {
     Step "waiting for the job to process the stream..."
     Start-Sleep -Seconds 55
 
-    # 7e. show output from whichever TaskManager ran the window operator
+    # 7g. show output from whichever TaskManager ran the window operator
     Write-Host ""
     Write-Host "  ---- emitted windows / alerts ----" -ForegroundColor White
     $shown = $false
@@ -192,7 +226,8 @@ if ($Distributed) {
     if (-not $shown) { Warn "no output yet - the window operator may still be catching up; the job stays running" }
     else { Ok "distributed detection complete (a window with alert=true should appear above)" }
 
-    # 7f. copy evidence out and cancel the job
+    # 7h. copy evidence out and cancel the job
+    Remove-Item -Force 'results\flink_run.jsonl' -ErrorAction SilentlyContinue
     foreach ($tm in @('project_bda-taskmanager-1', 'project_bda-taskmanager-2')) {
         & docker cp "${tm}:$runOut" "results\flink_run.jsonl" 2>$null
         if (Test-Path 'results\flink_run.jsonl') { break }
