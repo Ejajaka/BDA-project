@@ -1,5 +1,5 @@
 # Flink image with Python + PyFlink so the streaming job can run distributed.
-# Build:  docker compose build
+# Build (from the project root):  docker compose -f deploy/docker-compose.yml build
 FROM flink:1.20-scala_2.12-java17
 
 USER root
@@ -13,12 +13,13 @@ RUN python3 -m venv /opt/venv \
     && /opt/venv/bin/pip install --no-cache-dir apache-flink==1.20.5
 
 # Project code (import path for the job) and the Kafka connector on Flink's classpath.
+# Build context is the project root (see deploy/docker-compose.yml -> context: ..).
 COPY sketchstream /opt/sketchstream/sketchstream
-COPY jobs /opt/jobs
+COPY flink /opt/flink
 COPY jars/ /opt/flink/lib/
 
 ENV PATH=/opt/venv/bin:$PATH
-ENV PYTHONPATH=/opt/sketchstream:/opt/jobs
+ENV PYTHONPATH=/opt/sketchstream:/opt/flink
 ENV PYFLINK_PYTHON=/opt/venv/bin/python
 
 WORKDIR /opt

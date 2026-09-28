@@ -19,9 +19,9 @@ PyFlink does not yet support Python 3.13. Run this from a Python 3.11 venv:
 
     pip install -r requirements-streaming.txt
     # local mini-cluster (no Flink cluster needed):
-    python jobs/flink_job.py --local
+    python flink/flink_job.py --local
     # submit to the Docker cluster:
-    docker exec -it sketchstream-jobmanager flink run -py /opt/jobs/flink_job.py
+    docker exec -it sketchstream-jobmanager flink run -py /opt/flink/flink_job.py
 
 The connector jar (matching your Flink version) must be on the classpath; see
 README.md. The sketch/detector classes are reused verbatim from ``sketchstream``,

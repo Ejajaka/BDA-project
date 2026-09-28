@@ -178,13 +178,13 @@ if ($Distributed) {
     $img = (& docker images -q sketchstream-flink:local 2>$null)
     if (-not $img) {
         Step "building Flink+Python image (first run only, several minutes)..."
-        & docker compose build
+        & docker compose -f deploy\docker-compose.yml build
         if ($LASTEXITCODE -ne 0) { Bad "docker compose build failed" }
     } else { Ok "Flink image already built" }
 
     # 7d. start cluster
     Step "starting Kafka + JobManager + 2 TaskManagers..."
-    & docker compose up -d --scale taskmanager=2 | Out-Null
+    & docker compose -f deploy\docker-compose.yml up -d --scale taskmanager=2 | Out-Null
     if ($LASTEXITCODE -ne 0) { Bad "docker compose up failed" }
 
     Step "waiting for the Flink cluster..."
@@ -207,7 +207,7 @@ if ($Distributed) {
     # 7f. submit the incremental PyFlink job
     Step "submitting the PyFlink job (--incremental: O(1) window memory)..."
     $runOut = "/tmp/flink_run.jsonl"
-    $submit = 'flink run -d -py /opt/jobs/flink_job.py --bootstrap kafka:29092 ' +
+    $submit = 'flink run -d -py /opt/flink/flink_job.py --bootstrap kafka:29092 ' +
               '--from-earliest --incremental --out ' + $runOut +
               ' --window-size 1 --parallelism 2 --warmup 2 --z-threshold 3.0'
     & docker exec sketchstream-jobmanager bash -lc $submit | Out-Null
@@ -219,7 +219,7 @@ if ($Distributed) {
     Write-Host ""
     Write-Host "  ---- emitted windows / alerts ----" -ForegroundColor White
     $shown = $false
-    foreach ($tm in @('project_bda-taskmanager-1', 'project_bda-taskmanager-2')) {
+    foreach ($tm in @('sketchstream-taskmanager-1', 'sketchstream-taskmanager-2')) {
         $out = & docker exec $tm bash -lc "test -s $runOut && cat $runOut" 2>$null
         if ($out) { $out | ForEach-Object { Write-Host ("  " + $_) }; $shown = $true; break }
     }
@@ -228,7 +228,7 @@ if ($Distributed) {
 
     # 7h. copy evidence out and cancel the job
     Remove-Item -Force 'results\flink_run.jsonl' -ErrorAction SilentlyContinue
-    foreach ($tm in @('project_bda-taskmanager-1', 'project_bda-taskmanager-2')) {
+    foreach ($tm in @('sketchstream-taskmanager-1', 'sketchstream-taskmanager-2')) {
         & docker cp "${tm}:$runOut" "results\flink_run.jsonl" 2>$null
         if (Test-Path 'results\flink_run.jsonl') { break }
     }
@@ -236,7 +236,7 @@ if ($Distributed) {
     if ($jobId) { & docker exec sketchstream-jobmanager bash -lc "flink cancel $($jobId.Trim())" | Out-Null }
 
     Write-Host ""
-    Ok "cluster is still running. Stop it with:  docker compose down"
+    Ok "cluster is still running. Stop it with:  docker compose -f deploy/docker-compose.yml down"
 }
 
 # -----------------------------------------------------------------------------

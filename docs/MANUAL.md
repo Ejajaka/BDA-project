@@ -96,15 +96,22 @@ That is the whole core system, end to end.
 ```
 BDA-project/
 ├── README.md                       Project overview + rubric mapping
-├── MANUAL.md                       (this file) full recreation guide
+├── run_all.bat / run_all.ps1       One-command runners (start here)
 ├── requirements.txt                Core deps: numpy, pandas, matplotlib, pyyaml, pytest, streamlit
 ├── requirements-streaming.txt      Kafka/Flink deps: apache-flink==1.20.*, confluent-kafka (Python 3.11)
-├── docker-compose.yml              Kafka (KRaft) + Flink JobManager + Flink TaskManager(s)
 ├── pytest.ini                      pytest config (tests/ dir)
 ├── conftest.py                     makes repo root importable under pytest
-├── .gitignore                      ignores data/, results/, figures/, caches
+├── .gitignore                      ignores data/, results/, figures/, jars/, caches
+│
+├── docs/
+│   ├── MANUAL.md                   (this file) full recreation guide
+│   └── project-proposal.txt        original project proposal text
 ├── configs/
 │   └── default.yaml                documented parameter set (stream/sketches/detectors)
+│
+├── deploy/
+│   ├── Dockerfile.flink            Flink image + Python/PyFlink (for the cluster run)
+│   └── docker-compose.yml          Kafka (KRaft) + Flink JobManager + TaskManager(s)
 │
 ├── sketchstream/                   *** THE CORE LIBRARY (pure Python) ***
 │   ├── __init__.py                 public exports + version
@@ -140,14 +147,13 @@ BDA-project/
 │       ├── local.py                run_local_pipeline (exact + sketches side by side)
 │       └── jsonl.py                dump_run -> dashboard-ready JSONL
 │
-├── jobs/
+├── flink/
 │   └── flink_job.py                PyFlink job: Kafka -> sketches -> alerts
 ├── scripts/
 │   ├── run_local_experiments.py    Experiments 1-6 (CSV + figures)
 │   ├── run_cicids_evaluation.py    Dataset evaluation (--demo, CIC-IDS2017, UNSW-NB15)
 │   ├── demo_stream.py              Generate JSONL for the dashboard
 │   └── kafka_producer.py           Publish events to Kafka (synthetic or CIC-IDS)
-├── Dockerfile.flink                Flink image + Python/PyFlink (for the cluster run)
 ├── dashboard/
 │   └── app.py                      Streamlit live dashboard
 └── tests/
@@ -157,11 +163,13 @@ BDA-project/
     ├── test_windows.py             Tumbling counts, sliding merge, summary merging
     ├── test_detector.py            Fixed/adaptive/CUSUM behaviour incl. drift
     ├── test_generator.py           Rate correctness, anomaly labelling, determinism
+    ├── test_state.py               Mergeable SketchState: merge, serialisation
     └── test_metrics.py             Confusion matrix, latency, top-k overlap
 ```
 
 Generated (not committed — see `.gitignore`): `results/` (CSV + JSONL),
-`figures/` (PNG), `data/` (datasets).
+`figures/` (PNG), `data/` (datasets) and `jars/` (Kafka connector JAR, fetched
+on demand by `run_all`).
 
 ---
 
@@ -436,22 +444,26 @@ numbers they validate.
 ## C.1 Start Kafka + Flink
 
 ```powershell
-docker compose build                        # builds Flink+Python (Dockerfile.flink)
-docker compose up -d --scale taskmanager=2  # 1 JobManager + 2 TaskManagers
+docker compose -f deploy/docker-compose.yml build                        # Flink+Python image
+docker compose -f deploy/docker-compose.yml up -d --scale taskmanager=2  # 1 JM + 2 TMs
 ```
 
 - Flink UI: **http://localhost:8082** (8081 is taken by another app on this
-  machine — change the port mapping in `docker-compose.yml` if needed)
+  machine — change the port mapping in `deploy/docker-compose.yml` if needed)
 - Kafka (host): `localhost:9092`; Kafka (in-cluster): `kafka:29092`
 
-`docker-compose.yml` runs Kafka in **KRaft** mode (official `apache/kafka` image;
-Bitnami's images were deprecated) and one Flink JobManager plus two TaskManagers
-built from `Dockerfile.flink` (adds Python 3 + PyFlink + the project + the Kafka
-connector JAR in `/opt/flink/lib`).
+`deploy/docker-compose.yml` runs Kafka in **KRaft** mode (official `apache/kafka`
+image; Bitnami's images were deprecated) and one Flink JobManager plus two
+TaskManagers built from `deploy/Dockerfile.flink` (adds Python 3 + PyFlink + the
+project + the Kafka connector JAR in `/opt/flink/lib`).
+
+> Simplest: run `run_all.bat -Distributed`, which performs C.1–C.4 for you.
 
 ## C.2 Install streaming deps (Python 3.11)
 
 ```powershell
+# if the 'py' launcher is unavailable, use the install path:
+#   & "$env:LOCALAPPDATA\Programs\Python\Python311\python.exe" -m venv .venv311
 py -3.11 -m venv .venv311
 .venv311\Scripts\activate
 pip install -r requirements-streaming.txt
@@ -473,19 +485,19 @@ Events are JSON on topic `network-events` (4 partitions).
 
 ```powershell
 # submit to the Docker cluster (the connector jar is baked into the image)
-docker exec sketchstream-jobmanager bash -lc "flink run -d -py /opt/jobs/flink_job.py \
+docker exec sketchstream-jobmanager bash -lc "flink run -d -py /opt/flink/flink_job.py \
   --bootstrap kafka:29092 --from-earliest --out /tmp/flink_stream.jsonl \
   --window-size 1 --parallelism 2"
 
 # read output from the TaskManager that ran the window operator
-docker exec project_bda-taskmanager-1 bash -lc "cat /tmp/flink_stream.jsonl"
+docker exec sketchstream-taskmanager-1 bash -lc "cat /tmp/flink_stream.jsonl"
 
 # list / cancel
 docker exec sketchstream-jobmanager bash -lc "flink list -r"
 docker exec sketchstream-jobmanager bash -lc "flink cancel <jobid>"
 ```
 
-> Local `python jobs/flink_job.py --local` also works on **Linux**, but PyFlink's
+> Local `python flink/flink_job.py --local` also works on **Linux**, but PyFlink's
 > Python harness is unreliable on Windows — prefer the in-cluster run.
 
 Pipeline inside the job: Kafka → parse `(ts, src_ip)` → event-time watermarks →
@@ -565,7 +577,7 @@ exact 0.05 MB vs sketches 97 KB (sketches *lose* at this cardinality — expecte
 | `ModuleNotFoundError: sketchstream` running a script | Scripts add the repo root to `sys.path`; run from the project root. Tests use `conftest.py`. |
 | PowerShell shows a red “NativeCommandError” for `git`/`java`/`pip` output | PowerShell treats stderr as errors; the command usually succeeded. Check the actual output. |
 | `apache-flink` install fails | PyFlink needs Python ≤3.11. Use a `.venv311` environment. |
-| `docker compose` warns about `deploy.replicas` | Also run `docker compose up -d --scale taskmanager=2`. |
+| `docker compose` warns about `deploy.replicas` | Also run `docker compose -f deploy/docker-compose.yml up -d --scale taskmanager=2`. |
 | Flink job can’t find Kafka connector | Add the matching `flink-connector-kafka` JAR via `--jar`. |
 | Dashboard says “No window records found” | Run `scripts/demo_stream.py` first; check the file path in the sidebar. |
 | Experiment output looks empty | Ensure `results/` and `figures/` exist (the script creates them). |
@@ -634,7 +646,7 @@ The `--incremental` path (`SketchAggregate` + `IncrementalEmitter` using
 cluster (`total=1243`, `192.168.0.66=1106`, `z=40.82`), but folds each event into
 a fixed-size state instead of buffering the window:
 ```
-flink run -d -py /opt/jobs/flink_job.py --bootstrap kafka:29092 --from-earliest \
+flink run -d -py /opt/flink/flink_job.py --bootstrap kafka:29092 --from-earliest \
   --incremental --out /tmp/flink_incremental.jsonl --window-size 1 --parallelism 2 \
   --warmup 2 --z-threshold 3.0
 ```

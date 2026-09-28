@@ -11,7 +11,7 @@ instead of a fixed threshold.
 The novelty is a *unified streaming framework + rigorous empirical evaluation* —
 we do **not** claim to have invented CMS, HLL, Kafka, Flink or anomaly detection.
 
-> 📘 **New here? Read [`MANUAL.md`](MANUAL.md)** — the full step-by-step recreation
+> 📘 **New here? Read [`docs/MANUAL.md`](docs/MANUAL.md)** — the full step-by-step recreation
 > guide (environment, every file, rebuild-from-scratch, experiments, distributed
 > deployment, troubleshooting).
 
@@ -22,7 +22,7 @@ we do **not** claim to have invented CMS, HLL, Kafka, Flink or anomaly detection
 | Criterion | Where it is satisfied |
 |---|---|
 | **CO1 – Foundations (2)** | `sketchstream/hashing.py`, `sketchstream/sketches/` (CMS, HLL, Space-Saving implemented from scratch, with error bounds in docstrings) |
-| **CO2/3/4 – New Big Data tech (12)** | `docker-compose.yml` (Kafka KRaft + Flink + 2 TaskManagers), `jobs/flink_job.py` (PyFlink), `scripts/kafka_producer.py`, Apache DataSketches-compatible sketch design |
+| **CO2/3/4 – New Big Data tech (12)** | `deploy/docker-compose.yml` (Kafka KRaft + Flink + 2 TaskManagers), `flink/flink_job.py` (PyFlink), `scripts/kafka_producer.py`, Apache DataSketches-compatible sketch design |
 | **CO5 – Design & problem solving (16)** | Sliding-window merge design (no-decrement issue), adaptive EWMA/CUSUM detector, ablation, memory/accuracy/latency trade-off analysis, reproducible experiment harness |
 
 ---
@@ -39,7 +39,7 @@ we do **not** claim to have invented CMS, HLL, Kafka, Flink or anomaly detection
         Apache Kafka  topic: "network-events" (4 partitions)
               |
               v
-        Apache Flink  (jobs/flink_job.py)  OR  local runner (sketchstream.pipeline)
+        Apache Flink  (flink/flink_job.py)  OR  local runner (sketchstream.pipeline)
               |
       +-------+--------+
       |                |
@@ -63,24 +63,30 @@ we do **not** claim to have invented CMS, HLL, Kafka, Flink or anomaly detection
 ## Repository layout
 
 ```
-sketchstream/            core library (pure Python, no containers needed)
-  hashing.py             reproducible 128-bit hashing + double hashing
-  events.py              NetworkEvent, WindowSummary
-  windows.py             tumbling + sliding aggregation (merge-based)
-  sketches/              count_min.py, hyperloglog.py, heavy_hitters.py
-  counting/exact.py      exact hashmap baseline (memory measurement)
-  detector/              base.py, threshold.py, adaptive.py
-  generator/synthetic.py reproducible traffic (spikes, gradual, heavy hitters)
-  io/cicids.py           robust CIC-IDS2017 loader
-  pipeline/local.py      end-to-end local runner
-  pipeline/jsonl.py      dashboard-ready JSONL output
-  metrics/evaluation.py  error, precision/recall/F1, latency, top-k overlap
-jobs/flink_job.py        PyFlink streaming job (Kafka -> sketches -> alerts)
-scripts/                 experiments, demo stream, Kafka producer
-dashboard/app.py         Streamlit dashboard
-tests/                   34 unit tests
-configs/default.yaml     experiment parameters
-docker-compose.yml       Kafka + Flink cluster
+run_all.bat / run_all.ps1   one-command runners (start here)
+requirements.txt            core dependencies (local runs)
+requirements-streaming.txt Kafka/Flink deps (PyFlink, Python 3.11)
+
+sketchstream/               core library (pure Python, no containers needed)
+  hashing.py                reproducible 128-bit hashing + double hashing
+  events.py                 NetworkEvent, WindowSummary
+  windows.py                tumbling + sliding aggregation (merge-based)
+  sketches/                 count_min.py, hyperloglog.py, heavy_hitters.py, state.py
+  counting/exact.py         exact hashmap baseline (memory measurement)
+  detector/                 base.py, threshold.py, adaptive.py
+  generator/synthetic.py    reproducible traffic (spikes, gradual, heavy hitters)
+  io/                       cicids.py, unsw.py (dataset loaders)
+  pipeline/                 local.py (end-to-end), jsonl.py (dashboard output)
+  metrics/evaluation.py     error, precision/recall/F1, latency, top-k
+
+flink/flink_job.py          PyFlink streaming job (Kafka -> sketches -> alerts)
+scripts/                    experiments, dataset evaluation, demo stream, Kafka producer
+dashboard/app.py            Streamlit dashboard
+deploy/                     Dockerfile.flink + docker-compose.yml (Kafka + Flink)
+configs/default.yaml        experiment parameters
+docs/                       MANUAL.md, project-proposal.txt
+tests/                      41 unit tests
+data/ results/ figures/ jars/   generated (git-ignored; data & jars fetched on demand)
 ```
 
 ---
@@ -112,8 +118,8 @@ Artifacts are written to `results/` (CSV) and `figures/` (PNG).
 ### Distributed path (Kafka + Flink)
 
 ```powershell
-docker compose build                        # builds Flink+Python image (Dockerfile.flink)
-docker compose up -d --scale taskmanager=2  # 1 JobManager + 2 TaskManagers
+docker compose -f deploy/docker-compose.yml build                     # Flink+Python image
+docker compose -f deploy/docker-compose.yml up -d --scale taskmanager=2
 # Flink UI: http://localhost:8082   (8081 may be taken by another app)
 # Kafka broker for the host: localhost:9092 ; in-network: kafka:29092
 
@@ -122,19 +128,22 @@ pip install -r requirements-streaming.txt
 python scripts/kafka_producer.py --scenario mixed --duration 60 --base-rate 5000 --limit 150000
 
 # submit the PyFlink job to the cluster (jar is baked into the image at /opt/flink/lib):
-docker exec sketchstream-jobmanager bash -lc "flink run -d -py /opt/jobs/flink_job.py \
+docker exec sketchstream-jobmanager bash -lc "flink run -d -py /opt/flink/flink_job.py \
   --bootstrap kafka:29092 --from-earliest --out /tmp/flink_stream.jsonl --window-size 1 --parallelism 2"
 
 # read results / cancel
-docker exec project_bda-taskmanager-1 bash -lc "cat /tmp/flink_stream.jsonl"
+docker exec sketchstream-taskmanager-1 bash -lc "cat /tmp/flink_stream.jsonl"
 docker exec sketchstream-jobmanager bash -lc "flink list -r"      # then: flink cancel <jobid>
+
+# stop
+docker compose -f deploy/docker-compose.yml down
 ```
 
 > **Python 3.13 caveat.** PyFlink has no wheel for 3.13. Install Python 3.11
 > (`winget install Python.Python.3.11`), create `.venv311`, and install
 > `requirements-streaming.txt` there. PyFlink also has an unreliable harness on
 > Windows, which is why the job is run **inside the Docker cluster** (Linux) via
-> `Dockerfile.flink`.
+> `deploy/Dockerfile.flink`.
 
 ---
 
