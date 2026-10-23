@@ -2,7 +2,7 @@
 
 This mirrors the Kafka/Flink pipeline but runs in-process, so it is usable for
 development, unit tests and the offline experiments *without* any containers.
-The streaming job in ``jobs/flink_job.py`` uses the same sketch/window/detector
+The streaming job in ``flink/flink_job.py`` uses the same sketch/window/detector
 classes, so results are comparable.
 
 Both an exact hashmap baseline and the sketch pipeline are run over the same

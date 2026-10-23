@@ -85,7 +85,7 @@ dashboard/app.py            Streamlit dashboard
 deploy/                     Dockerfile.flink + docker-compose.yml (Kafka + Flink)
 configs/default.yaml        experiment parameters
 docs/                       MANUAL.md, project-proposal.txt
-tests/                      41 unit tests
+tests/                      44 unit tests
 data/ results/ figures/ jars/   generated (git-ignored; data & jars fetched on demand)
 ```
 
@@ -106,7 +106,7 @@ Options: `-Quick` (smaller sizes), `-SkipInstall`, `-SkipTests`, `-NoDashboard`,
 ### Or step by step
 ```powershell
 pip install -r requirements.txt
-python -m pytest -q                      # 41 tests
+python -m pytest -q                      # 44 tests
 python scripts/run_local_experiments.py --quick
 python scripts/run_cicids_evaluation.py --cicids "data/cicids/<file>.csv"
 python scripts/demo_stream.py --scenario mixed --duration 90 --base-rate 2000
@@ -227,19 +227,20 @@ docker compose -f deploy/docker-compose.yml down
 
 | Metric | Value |
 |---|---|
-| Memory: exact hashmap vs sketches | 0.17 MB (2,067 keys) vs **96.9 KB** |
-| CMS mean relative error (width 2000, depth 5) | 7.4 % |
-| HLL relative error (precision 12) | **0.39 %** |
+| Memory: exact hashmap vs sketches | 0.18 MB (2,067 keys) vs **96.9 KB** |
+| CMS mean relative error (width 2000, depth 5) | 9.8 % |
+| HLL relative error (precision 12) | **0.25 %** |
 | Interval recall (all detectors) | **1.00** (all 21 intervals detected) |
+| Heavy-hitter top-10 overlap (Space-Saving) | **1.00** |
 | Fixed threshold | P=0.42 R=1.00 F1=0.59 |
 | Adaptive EWMA / CUSUM | P=0.43 R=1.00 F1=0.60 |
 
 Evidence: `results/cicids_memory.csv`, `results/cicids_sketch_accuracy.csv`,
-`results/cicids_ablation.csv`.
+`results/cicids_heavyhitters.csv`, `results/cicids_ablation.csv`.
 
 ### Verified distributed run (evidence in `results/`)
 ```
-Kafka (4 partitions, 150k events)
+Kafka (4 partitions, demo stream)
   -> Flink 1.20.5 cluster (1 JobManager + 2 TaskManagers, 8 slots)
   -> PyFlink job: CMS + HLL + Space-Saving over 1s event-time windows
   -> adaptive detector
@@ -253,10 +254,11 @@ this machine).
 
 ## Notes & limitations
 
-- The Flink job currently aggregates each window with a `ProcessAllWindowFunction`
-  (buffers the window). This is simple and correct for 1 s windows; a
-  production-grade version would keep incremental, mergeable sketch **state**
-  (e.g. Flink `AggregateFunction` over CMS/HLL).
+- The default (non-incremental) Flink mode aggregates each window with a
+  `ProcessAllWindowFunction`, which buffers the window; this is simple and
+  correct for 1 s windows. The `--incremental` mode instead uses an
+  `AggregateFunction` over the mergeable `SketchState`, so window memory is
+  O(1) regardless of window size.
 - `min_std` in the adaptive detector guards against a near-zero baseline variance;
   tune it per stream rate.
 - Memory is measured in-process (`deep_getsizeof`) for like-for-like comparison;

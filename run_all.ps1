@@ -12,7 +12,7 @@
 #
 #  What it does (local, no Docker):
 #     1. installs dependencies
-#     2. runs the 41 unit tests
+#     2. runs the 44 unit tests
 #     3. runs the synthetic experiments (CSV + figures)
 #     4. runs the real CIC-IDS2017 evaluation (or a self-test if data is absent)
 #     5. generates the dashboard stream
@@ -90,7 +90,7 @@ if (-not $SkipInstall) {
 
 # -----------------------------------------------------------------------------
 if (-not $SkipTests) {
-    Section "2. Unit tests (expect 41 passed)"
+    Section "2. Unit tests (expect 44 passed)"
     $code = Invoke-Py @('-m', 'pytest', '-q')
     if ($code -ne 0) { Bad "tests failed" } else { Ok "all tests passed" }
 } else { Warn "tests skipped (-SkipTests)" }
@@ -166,7 +166,7 @@ if ($Distributed) {
         if ($p311 -eq "py") { & py -3.11 -m venv .venv311 2>$null }
         else { & $p311 -m venv .venv311 }
         if (Test-Path '.\.venv311\Scripts\python.exe') {
-            & .\.venv311\Scripts\python.exe -m pip install -q confluent-kafka
+            & .\.venv311\Scripts\python.exe -m pip install -q confluent-kafka numpy pandas
             $prodPy = ".\.venv311\Scripts\python.exe"
             Ok "producer environment ready"
         } else {

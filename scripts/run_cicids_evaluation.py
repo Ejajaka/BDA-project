@@ -54,6 +54,7 @@ from sketchstream.metrics import (
     interval_precision,
     interval_recall,
     relative_error,
+    topk_overlap,
 )
 from sketchstream.pipeline import run_local_pipeline
 from sketchstream.sketches import CountMinSketch, HyperLogLog
@@ -130,6 +131,41 @@ def sketch_accuracy(events: List[NetworkEvent], cms_width: int, hll_precision: i
         "hll_rel_error": relative_error(hll.estimate(), len(truth)),
         "cms_bytes": cms.n_bytes,
         "hll_bytes": hll.n_bytes,
+    }
+
+
+def _window_exact_topk(
+    events: List[NetworkEvent], size: float, k: int
+) -> Dict[int, List]:
+    """Exact top-``k`` source IPs per window (ground truth for heavy hitters)."""
+    counts: Dict[int, Counter] = {}
+    for e in events:
+        idx = int(e.ts // size)
+        counts.setdefault(idx, Counter())[e.src_ip] += 1
+    return {idx: c.most_common(k) for idx, c in counts.items()}
+
+
+def heavy_hitter_accuracy(
+    summaries: Sequence,
+    events: List[NetworkEvent],
+    window_size: float,
+    k: int = 10,
+    min_events: int = 5,
+) -> Dict[str, float]:
+    """Mean top-``k`` overlap between the Space-Saving report and exact truth."""
+    truth = _window_exact_topk(events, window_size, k)
+    overlaps = []
+    for s in summaries:
+        if s.total < min_events or not s.top_keys:
+            continue
+        actual = truth.get(s.index)
+        if not actual:
+            continue
+        overlaps.append(topk_overlap(s.top_keys, actual, k))
+    return {
+        "k": k,
+        "windows_evaluated": len(overlaps),
+        "mean_topk_overlap": float(np.mean(overlaps)) if overlaps else 0.0,
     }
 
 
@@ -211,6 +247,18 @@ def main(argv=None):
         os.path.join(args.out, "cicids_sketch_accuracy.csv"),
         list(acc.keys()),
         [list(acc.values())],
+    )
+
+    # ---- heavy hitters (Space-Saving top-k vs exact) --------------------- #
+    hh = heavy_hitter_accuracy(result.summaries, events, args.window_size, k=10)
+    print(
+        f"  heavy-hitter top-{hh['k']} overlap={hh['mean_topk_overlap']:.3f} "
+        f"over {hh['windows_evaluated']} windows"
+    )
+    write_csv(
+        os.path.join(args.out, "cicids_heavyhitters.csv"),
+        list(hh.keys()),
+        [list(hh.values())],
     )
 
     # ---- detector ablation (window + interval level) ---------------------- #

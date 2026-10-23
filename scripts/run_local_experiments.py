@@ -46,6 +46,7 @@ from sketchstream.detector import (
     CusumDetector,
     FixedThresholdDetector,
 )
+from sketchstream.config import DEFAULT_CONFIG_PATH, load_config
 from sketchstream.events import NetworkEvent
 from sketchstream.generator import AnomalySpec, SyntheticConfig, generate
 from sketchstream.metrics import (
@@ -54,6 +55,7 @@ from sketchstream.metrics import (
     interval_precision,
     interval_recall,
     relative_error,
+    topk_overlap,
 )
 from sketchstream.pipeline import run_local_pipeline
 from sketchstream.sketches import CountMinSketch, HyperLogLog
@@ -102,23 +104,38 @@ def _window_topk_truth(events, size, k):
     return {idx: c.most_common(k) for idx, c in truth.items()}
 
 
+def _sketch_defaults(sketch_cfg):
+    """Sketch sizes from the config, with the built-in defaults as fallback."""
+    sketch_cfg = sketch_cfg or {}
+    return dict(
+        cms_width=sketch_cfg.get("cms_width", 2000),
+        cms_depth=sketch_cfg.get("cms_depth", 5),
+        hll_precision=sketch_cfg.get("hll_precision", 12),
+        hh_capacity=sketch_cfg.get("hh_capacity", 200),
+        top_k=sketch_cfg.get("top_k", 10),
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Experiment 1 - memory vs events
 # --------------------------------------------------------------------------- #
-def exp1_memory(out_dir, fig_dir, quick=False):
+def exp1_memory(out_dir, fig_dir, quick=False, sketch_cfg=None):
     print("[Exp1] exact hashmap vs sketches: memory vs #events")
     n_events = 60_000 if quick else 300_000
     base_rate, n_sources = 5000.0, 4000
     events = make_events(n_events, base_rate, n_sources, seed=1)
     checkpoint = max(n_events // 10, 1)
+    s = _sketch_defaults(sketch_cfg)
 
     result = run_local_pipeline(
         events,
         detector=AdaptiveDetector(warmup=10),
         window_size=1.0,
-        cms_width=2000,
-        cms_depth=5,
-        hll_precision=12,
+        cms_width=s["cms_width"],
+        cms_depth=s["cms_depth"],
+        hll_precision=s["hll_precision"],
+        hh_capacity=s["hh_capacity"],
+        top_k=s["top_k"],
         checkpoint_every=checkpoint,
     )
     rows = [[n, exact_b, sketch_b] for n, exact_b, sketch_b in result.memory_curve]
@@ -132,6 +149,24 @@ def exp1_memory(out_dir, fig_dir, quick=False):
         f"  events={result.n_events}  exact={result.exact_memory_bytes/1e6:.2f} MB "
         f"({result.exact_unique} keys)  sketches={result.sketch_memory_bytes/1e3:.1f} KB "
         f"throughput={result.throughput:,.0f} ev/s"
+    )
+
+    # Heavy-hitter quality: Space-Saving top-k vs exact per-window top-k.
+    truth_topk = _window_topk_truth(events, 1.0, 10)
+    overlaps = [
+        topk_overlap(s.top_keys, truth_topk.get(s.index, []), 10)
+        for s in result.summaries
+        if s.total > 0 and truth_topk.get(s.index)
+    ]
+    mean_overlap = float(np.mean(overlaps)) if overlaps else 0.0
+    print(
+        f"  heavy-hitter top-10 overlap={mean_overlap:.3f} "
+        f"over {len(overlaps)} windows"
+    )
+    write_csv(
+        os.path.join(out_dir, "exp1_topk_overlap.csv"),
+        ["k", "mean_topk_overlap", "windows"],
+        [[10, round(mean_overlap, 4), len(overlaps)]],
     )
     if _HAVE_PLT:
         fig, ax = plt.subplots(figsize=(7, 4.5))
@@ -149,7 +184,7 @@ def exp1_memory(out_dir, fig_dir, quick=False):
 # --------------------------------------------------------------------------- #
 # Experiment 2 - CMS size vs frequency error
 # --------------------------------------------------------------------------- #
-def exp2_cms_error(out_dir, fig_dir, quick=False):
+def exp2_cms_error(out_dir, fig_dir, quick=False, sketch_cfg=None):
     print("[Exp2] CMS size vs frequency-estimation error")
     n_events = 40_000 if quick else 200_000
     base_rate, n_sources, seed = 5000.0, 3000, 2
@@ -196,7 +231,7 @@ def exp2_cms_error(out_dir, fig_dir, quick=False):
 # --------------------------------------------------------------------------- #
 # Experiment 3 - HLL precision vs cardinality error
 # --------------------------------------------------------------------------- #
-def exp3_hll_error(out_dir, fig_dir, quick=False):
+def exp3_hll_error(out_dir, fig_dir, quick=False, sketch_cfg=None):
     print("[Exp3] HLL precision vs cardinality-estimation error")
     cardinalities = [1_000, 10_000, 100_000] if quick else [1_000, 10_000, 100_000, 1_000_000]
     precisions = [10, 12, 14] if quick else [10, 12, 14, 16]
@@ -237,7 +272,7 @@ def exp3_hll_error(out_dir, fig_dir, quick=False):
 # --------------------------------------------------------------------------- #
 # Experiment 4 - fixed vs adaptive under traffic drift
 # --------------------------------------------------------------------------- #
-def exp4_fixed_vs_adaptive(out_dir, fig_dir, quick=False):
+def exp4_fixed_vs_adaptive(out_dir, fig_dir, quick=False, sketch_cfg=None):
     print("[Exp4] fixed threshold vs adaptive under traffic drift")
     from sketchstream.events import WindowSummary
 
@@ -313,7 +348,7 @@ def _eval_run(events, intervals, detector, window_size, sketch_kwargs):
     return metrics
 
 
-def exp5_ablation(out_dir, fig_dir, quick=False):
+def exp5_ablation(out_dir, fig_dir, quick=False, sketch_cfg=None):
     print("[Exp5] ablation: fixed vs adaptive vs cusum")
     duration = 200.0 if quick else 400.0
     base_rate = 1500.0
@@ -326,7 +361,7 @@ def exp5_ablation(out_dir, fig_dir, quick=False):
         ],
     )
     events, intervals = generate(config)
-    sketch_kwargs = dict(cms_width=2000, cms_depth=5, hll_precision=12, hh_capacity=200)
+    sketch_kwargs = _sketch_defaults(sketch_cfg)
 
     detectors = {
         "fixed": FixedThresholdDetector(threshold=base_rate * window_size * 3),
@@ -368,10 +403,11 @@ def exp5_ablation(out_dir, fig_dir, quick=False):
 # --------------------------------------------------------------------------- #
 # Experiment 6 - anomaly intensity sweep
 # --------------------------------------------------------------------------- #
-def exp6_intensity(out_dir, fig_dir, quick=False):
+def exp6_intensity(out_dir, fig_dir, quick=False, sketch_cfg=None):
     print("[Exp6] anomaly intensity sweep (detection rate + latency)")
     multipliers = [2, 5, 10, 50] if not quick else [5, 50]
     duration, base_rate, window_size = 200.0, 1500.0, 1.0
+    s = _sketch_defaults(sketch_cfg)
     rows = []
     for mult in multipliers:
         config = SyntheticConfig(
@@ -382,7 +418,8 @@ def exp6_intensity(out_dir, fig_dir, quick=False):
         det = AdaptiveDetector(warmup=30, z_threshold=4.0)
         result = run_local_pipeline(
             events, detector=det, window_size=window_size,
-            cms_width=2000, cms_depth=5, hll_precision=12, hh_capacity=200,
+            cms_width=s["cms_width"], cms_depth=s["cms_depth"],
+            hll_precision=s["hll_precision"], hh_capacity=s["hh_capacity"],
         )
         lat = [x for x in detection_latencies(result.alerts, intervals) if x is not None]
         detected = 1 if lat else 0
@@ -423,14 +460,19 @@ def main(argv=None):
     parser.add_argument("--figs", default="figures", help="figure output directory")
     parser.add_argument("--quick", action="store_true", help="small sizes for a fast smoke run")
     parser.add_argument("--seed", type=int, default=0, help="global RNG seed")
+    parser.add_argument("--config", default=DEFAULT_CONFIG_PATH,
+                        help="parameter file (sketch sizes, etc.)")
     args = parser.parse_args(argv)
+
+    config = load_config(args.config)
+    sketch_cfg = config.get("sketches", {}) or {}
 
     random.seed(args.seed)
     np.random.seed(args.seed)
     ensure_dirs(args.out, args.figs)
 
     for key in args.experiments:
-        EXPERIMENTS[key](args.out, args.figs, quick=args.quick)
+        EXPERIMENTS[key](args.out, args.figs, quick=args.quick, sketch_cfg=sketch_cfg)
     print("done.")
 
 

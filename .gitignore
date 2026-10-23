@@ -20,6 +20,7 @@ jars/
 results/*
 !results/cicids_memory.csv
 !results/cicids_sketch_accuracy.csv
+!results/cicids_heavyhitters.csv
 !results/cicids_ablation.csv
 !results/flink_stream.jsonl
 !results/flink_alerts.jsonl

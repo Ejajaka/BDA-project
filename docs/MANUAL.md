@@ -412,7 +412,8 @@ CMS merges by addition, HLL by max, heavy hitters are re-scored from the merged 
 - `evaluate_detection(summaries, alerts, truth)` → TP/FP/TN/FN, precision, recall,
   F1, FPR.
 - `detection_latencies(alerts, intervals)` → first alert after each anomaly start.
-- `topk_overlap(pred, actual, k)`.
+- `topk_overlap(pred, actual, k)` — used for the heavy-hitter evaluation
+  (`cicids_heavyhitters.csv` and `exp1_topk_overlap.csv`).
 
 ## B.11 Local pipeline (`sketchstream/pipeline/local.py`)
 
@@ -655,7 +656,7 @@ Evidence: `results/flink_incremental.jsonl`.
 ### Real CIC-IDS2017 evaluated
 `scripts/run_cicids_evaluation.py` was run on the real **Friday-WorkingHours-
 Afternoon-DDos** file (225,745 events, 2,067 source IPs, 21 attack intervals):
-memory 0.17 MB exact vs 96.9 KB sketches, CMS mean error 7.4 %, HLL error 0.39 %,
+memory 0.18 MB exact vs 96.9 KB sketches, CMS mean error 9.8 %, HLL error 0.25 %,
 **interval recall 1.00** for all detectors. Evidence:
 `results/cicids_memory.csv`, `results/cicids_sketch_accuracy.csv`,
 `results/cicids_ablation.csv`.
