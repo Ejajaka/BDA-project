@@ -4,10 +4,10 @@
 This manual documents **everything built so far**, step by step, so that any reader
 can (a) reproduce the results and (b) rebuild the system from scratch.
 
-> **State of this document:** reflects the initial commit (`5ed2e3b`) of the private
-> repository `Ejajaka/BDA-project`. Core system, experiments and dashboard are done
-> on **synthetic data**. Kafka + Flink is coded but not yet run end-to-end. Real
-> CIC-IDS2017 numbers are not yet produced.
+> **State of this document:** reflects the current `master` branch of
+> `Ejajaka/BDA-project`. Core system, experiments, dashboard, real CIC-IDS2017
+> evaluation and the distributed Kafka + Flink run are all verified. Evidence is
+> in `results/` and `figures/`; UNSW-NB15 remains optional.
 
 ---
 
